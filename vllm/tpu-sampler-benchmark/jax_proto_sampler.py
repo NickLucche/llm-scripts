@@ -61,18 +61,13 @@ def random_sample(
             q = q.at[i].set(random.exponential(key, shape=probs.shape[1]))
     return jnp.argmax(probs / q, axis=-1).reshape(-1)
 
-
-
+# Make sure TPU is listed here
+print(jax.devices())
 V = 128256
 H = V // 32
 
-# Initialize JAX for TPU
-# No need to specify device explicitly; JAX handles it
-
-# Initialize the sampler and model
+# Initialize linear layer
 key = jax.random.PRNGKey(42)
-
-# Initialize weights and biases
 key_W, key_b = jax.random.split(key)
 W = jax.random.normal(key_W, (H, V))
 b = jax.random.normal(key_b, (V,))
@@ -83,38 +78,27 @@ def linear(W, b, x):
     return jnp.dot(x, W) + b
 
 
-def debug_barrier(start=None, name=""):
-    if start:
-        print(name, "elapsed time:", time() - start)
-
-debug_barrier(name='Model+Sampler')
-
 @jit
-def model_with_sample(x, k, p):
+def model_with_sample(x, k, p)->jnp.ndarray:
     y = linear(W, b, x)
     y = forward_native(y, k, p)
     return y
 
-# Compile the model using JAX jit
-# model = jit(model)
-
-# Initialize sampling metadata
+# Some sampling metadata for tracing
 topp = jnp.array([0.6])
 topk = jnp.array([12], dtype=jnp.int32)
-debug_barrier(name="Meta")
 
-# Compile graph
+# Compile graph, keep consistency with xla benchmark code 
 for B in [1, 4, 16, 32]:
     x = random.normal(random.PRNGKey(0), (B, H))
     s = time()
-    out = model_with_sample(x, topk, topp)
-    debug_barrier(s, f"Compiling/Warmup {B}")
+    out = model_with_sample(x, topk, topp).block_until_ready()
+    print(f"Compiling/Warmup {B}", time()-s)
 
 # Run
-times = dict()
 for B in [1, 4, 16, 32]:
     x = random.normal(random.PRNGKey(0), (B, H))
     for _ in range(4):
         s = time()
-        out = model_with_sample(x, topk, topp)
-        debug_barrier(s, f"Running {B}")
+        out = model_with_sample(x, topk, topp).block_until_ready()
+        print(f"Running {B}", time()-s)

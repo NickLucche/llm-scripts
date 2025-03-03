@@ -20,6 +20,8 @@ def debug_barrier(start=None, name=""):
     if current_platform.is_tpu():
         xm.mark_step()
         xm.wait_device_ops()
+    else:
+        torch.cuda.synchronize()
     if start:
         print(name, "elapsed time:", time()-start)
     # if current_platform.is_tpu():
@@ -44,6 +46,7 @@ else:
 temp = torch.tensor([0.4]).to(DEVICE)
 topp = torch.tensor([0.6]).to(DEVICE) # some value just for tracing
 topk = torch.tensor([12], dtype=torch.long).to(DEVICE) # some value just for tracing
+# NOTE works on 75e9d497, most recent main has changed spec params again.
 meta = SamplingMetadata(temp, False, False, spec_token_ids=None, top_p=topp, top_k=topk, min_p=None, generators={}, max_num_logprobs=None, 
                         no_penalties=True, frequency_penalties=None, presence_penalties=None, repetition_penalties=None, output_token_ids=[[]], min_tokens=None, 
                         logit_bias=[], allowed_token_ids_mask=None, prompt_token_ids=None)
