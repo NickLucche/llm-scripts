@@ -47,7 +47,7 @@ temp = torch.tensor([0.4]).to(DEVICE)
 topp = torch.tensor([0.6]).to(DEVICE) # some value just for tracing
 topk = torch.tensor([12], dtype=torch.long).to(DEVICE) # some value just for tracing
 # NOTE works on 75e9d497, most recent main has changed spec params again.
-meta = SamplingMetadata(temp, False, False, spec_token_ids=None, top_p=topp, top_k=topk, min_p=None, generators={}, max_num_logprobs=None, 
+meta = SamplingMetadata(temp, False, False, top_p=topp, top_k=topk, min_p=None, generators={}, max_num_logprobs=None, 
                         no_penalties=True, frequency_penalties=None, presence_penalties=None, repetition_penalties=None, output_token_ids=[[]], min_tokens=None, 
                         logit_bias=[], allowed_token_ids_mask=None, prompt_token_ids=None)
 debug_barrier(name="Meta") # Nothing is executed nor compiled(!), things are just moved to device
@@ -61,7 +61,6 @@ for B in [1, 4, 16, 32]:
     debug_barrier(s, f"Compiling/Warmup {B}")
 
 # Run
-times = dict()
 for B in [1, 4, 16, 32]:
     x = torch.randn(B, H, device=DEVICE)
     debug_barrier() # tensor already on device graph
