@@ -1,27 +1,35 @@
 # Setting this allows creating a symlink to Justfile from another dir
-set working-directory := "/home/nicolo/llmd/llm-scripts/llmd"
+set working-directory := "/home/NickLucche/llmd/llm-scripts/llmd"
 
 # Needed for the proxy server
-vllm-directory := "/home/nicolo/llmd/vllm/" 
+vllm-directory := "/home/NickLucche/llmd/vllm/" 
 
-MODEL := "Qwen/Qwen3-0.6B"
+# MODEL := "Qwen/Qwen3-0.6B"
+# MODEL := "Qwen/Qwen3-32B"
+# MODEL := "jinaai/ReaderLM-v2"
+# MODEL := "mistralai/Mixtral-8x7B-Instruct-v0.1"
+# MODEL := "state-spaces/mamba-130m-hf"
+# MODEL := "openbmb/MiniCPM4.1-8B"
 # MODEL := "google/gemma-3-1b-it"
 # MODEL := "meta-llama/Llama-3.1-8B-Instruct"
-# MODEL := "deepseek-ai/DeepSeek-V2-Lite"
+# MODEL := "deepseek-ai/DeepSeek-V2-Lite-Chat"
 # MODEL := "deepseek-ai/deepseek-vl2-small"
 # MODEL := "google/gemma-3-1b-it"
 
-# MODEL := "meta-llama/Meta-Llama-3-8B-Instruct"
-TP_SIZE := "2"
-PREFILL_TP_SIZE := "1"
+MODEL := "meta-llama/Llama-3.1-70B"
+# MODEL := "deepseek-ai/DeepSeek-V2.5"
+TP_SIZE := "4"
+PREFILL_TP_SIZE := "4"
 # should use different ones cause it appears to crash oom when sharing
 # though there's plenty of memory
-PREFILL_GPUS := "6"
-DECODE_GPUS := "6,7"
+PREFILL_GPUS := "0,1,2,3,4,5,6,7"
+DECODE_GPUS := "0,1,2,3,4,5,6,7"
 
-MEMORY_UTIL := "0.4"
+MEMORY_UTIL := "0.95"
 BLOCK_SIZE := "128"
-MAX_MODEL_LEN := "1024" # 32768
+MAX_MODEL_LEN := "32768"
+# PREFIX_CACHING := "--no-enable-prefix-caching"
+PREFIX_CACHING := ""
 
 port PORT: 
   @python port_allocator.py {{PORT}}
@@ -33,13 +41,14 @@ regular:
     VLLM_WORKER_MULTIPROC_METHOD=spawn \
     VLLM_ENABLE_V1_MULTIPROCESSING=0 \
     vllm serve {{MODEL}} \
-      --port $(just port 8100) \
+      --port $(just port 8192) \
       --enforce-eager \
       --disable-log-requests \
       --tensor-parallel-size {{PREFILL_TP_SIZE}} \
-      --gpu-memory-utilization 1.0 \
+      --gpu-memory-utilization {{MEMORY_UTIL}} \
       --trust-remote-code \
-      --max-model-len 2048 \
+      --max-model-len {{MAX_MODEL_LEN}} \
+      --block-size {{BLOCK_SIZE}} \
       --max-num-seqs 1 \
       --data_parallel_size 1 \
       --max-num-batched-tokens 512 \
@@ -47,48 +56,70 @@ regular:
     # VLLM_WORKER_MULTIPROC_METHOD=spawn \
     # VLLM_ENABLE_V1_MULTIPROCESSING=0 \
 
+# Changed port due to port conflict
+
 prefill:
   VLLM_NIXL_SIDE_CHANNEL_PORT=$(just port 5557) \
-    UCX_LOG_LEVEL=info \
+  VLLM_NIXL_ABORT_REQUEST_TIMEOUT=120 \
     NIXL_TELEMETRY_ENABLE=y \
-    VLLM_ENABLE_V1_MULTIPROCESSING=0 \
     CUDA_VISIBLE_DEVICES={{PREFILL_GPUS}} \
     VLLM_LOGGING_LEVEL="INFO" \
-     vllm serve {{MODEL}} \
+      chg run -g{{PREFILL_TP_SIZE}} -- vllm serve {{MODEL}} \
       --port $(just port 8100) \
-      --enforce-eager \
-      --disable-log-requests \
+      --enable-log-requests \
       --tensor-parallel-size {{PREFILL_TP_SIZE}} \
       --gpu-memory-utilization {{MEMORY_UTIL}} \
       --trust-remote-code \
       --max-model-len {{MAX_MODEL_LEN}} \
       --block-size {{BLOCK_SIZE}} \
-      --data_parallel_size 1 \
-      --kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_both"}'
-      
-  # --speculative_config '{"model": "yuhuili/EAGLE-LLaMA3-Instruct-8B", "num_speculative_tokens": 2, "method": "eagle", "draft_tensor_parallel_size": 1}' \
+      {{PREFIX_CACHING}} \
+      --kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_both"}' \
+
 # --max-num-seqs 1 \
+# --speculative_config '{"model": "yuhuili/EAGLE-mixtral-instruct-8x7B", "num_speculative_tokens": 3, "method": "eagle", "draft_tensor_parallel_size": 1}' \
 # --max-num-batched-tokens 512 \
-decode:
+# UCX_LOG_LEVEL=info \
+
+decode-widep:
     VLLM_NIXL_SIDE_CHANNEL_PORT=$(just port 5558) \
-    UCX_LOG_LEVEL=info \
+    VLLM_NIXL_ABORT_REQUEST_TIMEOUT=120 \
     NIXL_TELEMETRY_ENABLE=y \
+    DP_SIZE_LOCAL={{TP_SIZE}} \
     VLLM_ENABLE_V1_MULTIPROCESSING=0 \
     CUDA_VISIBLE_DEVICES={{DECODE_GPUS}} \
     VLLM_LOGGING_LEVEL="INFO" \
-    vllm serve {{MODEL}} \
+     chg run -g{{TP_SIZE}} -- vllm serve {{MODEL}} \
       --port $(just port 8200) \
       --enforce-eager \
+      --disable-log-requests \
+      --data-parallel-size {{TP_SIZE}} \
+      --tensor-parallel-size 1 \
+      --enable-expert-parallel \
+      --gpu-memory-utilization {{MEMORY_UTIL}} \
+      --trust-remote-code \
+      --max-model-len {{MAX_MODEL_LEN}} \
+      --block-size {{BLOCK_SIZE}} \
+      {{PREFIX_CACHING}} \
+      --kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_both"}'
+
+decode:
+    VLLM_NIXL_SIDE_CHANNEL_PORT=$(just port 5558) \
+    VLLM_NIXL_ABORT_REQUEST_TIMEOUT=120 \
+    NIXL_TELEMETRY_ENABLE=y \
+    CUDA_VISIBLE_DEVICES={{DECODE_GPUS}} \
+    VLLM_LOGGING_LEVEL="INFO" \
+     chg run -g{{TP_SIZE}} -- vllm serve {{MODEL}} \
+      --port $(just port 8200) \
       --disable-log-requests \
       --tensor-parallel-size {{TP_SIZE}} \
       --gpu-memory-utilization {{MEMORY_UTIL}} \
       --trust-remote-code \
       --max-model-len {{MAX_MODEL_LEN}} \
       --block-size {{BLOCK_SIZE}} \
-      --data_parallel_size 1 \
+      {{PREFIX_CACHING}} \
       --kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_both"}'
 
-# --speculative_config '{"model": "yuhuili/EAGLE-LLaMA3-Instruct-8B", "num_speculative_tokens": 2, "method": "eagle", "draft_tensor_parallel_size": 1}' \
+# --speculative_config '{"model": "yuhuili/EAGLE-mixtral-instruct-8x7B", "num_speculative_tokens": 3, "method": "eagle", "draft_tensor_parallel_size": 1}' \
 # --max-num-seqs 1 \
 # --max-num-batched-tokens 512 \
 proxy:
@@ -105,6 +136,17 @@ send_request:
       "prompt": "Question: Olivia is organizing a charity event where she plans to hand out goodie bags to guests. She initially prepares 24 bags, each containing 3 small toys, 2 candy bars, and 5 stickers. After checking the guest list again, she realizes that 8 more children are attending than she expected. So she decides to prepare 8 more bags. However, when she goes to the store to get more supplies, she learns that the toys are sold only in packs of 6, candy bars in packs of 4, and stickers in packs of 10. She buys 4 packs of toys, 5 packs of candy bars, and 5 packs of stickers. After returning home, she assembles the remaining 8 bags. Later, she finds out that 3 of the original bags had missing candy bars, so she opens those bags and replaces the missing items. The next morning, she realizes she miscounted the total number of guests, and actually only 26 children are attending, not 32 as she previously thought. She decides to store the extra bags for a future event. How many complete goodie bags does Olivia now have available for the event, assuming each bag must contain exactly 3 toys, 2 candy bars, and 5 stickers? Answer: Question: Olivia is organizing a charity event where she plans to hand out goodie bags to guests. She initially prepares 24 bags, each containing 3 small toys, 2 candy bars, and 5 stickers. After checking the guest list again, she realizes that 8 more children are attending than she expected. So she decides to prepare 8 more bags. However, when she goes to the store to get more supplies, she learns that the toys are sold only in packs of 6, candy bars in packs of 4, and stickers in packs of 10. She buys 4 packs of toys, 5 packs of candy bars, and 5 packs of stickers. After returning home, she assembles the remaining 8 bags. Later, she finds out that 3 of the original bags had missing candy bars, so she opens those bags and replaces the missing items. The next morning, she realizes she miscounted the total number of guests, and actually only 26 children are attending, not 32 as she previously thought. She decides to store the extra bags for a future event. How many complete goodie bags does Olivia now have available for the event, assuming each bag must contain exactly 3 toys, 2 candy bars, and 5 stickers? Answer:", \
       "max_tokens": 150, \
       "temperature": 0.2 \
+    }'
+
+send_request_n:
+  curl -X POST http://localhost:$(just port 8192)/v1/completions \
+    -H "Content-Type: application/json" \
+    -d '{ \
+      "model": "{{MODEL}}", \
+      "prompt": "Question: Olivia is organizing a charity event where she plans to hand out goodie bags to guests. She initially prepares 24 bags, each containing 3 small toys, 2 candy bars, and 5 stickers. After checking the guest list again, she realizes that 8 more children are attending than she expected. So she decides to prepare 8 more bags. However, when she goes to the store to get more supplies, she learns that the toys are sold only in packs of 6, candy bars in packs of 4, and stickers in packs of 10. She buys 4 packs of toys, 5 packs of candy bars, and 5 packs of stickers. After returning home, she assembles the remaining 8 bags. Later, she finds out that 3 of the original bags had missing candy bars, so she opens those bags and replaces the missing items. The next morning, she realizes she miscounted the total number of guests, and actually only 26 children are attending, not 32 as she previously thought. She decides to store the extra bags for a future event. How many complete goodie bags does Olivia now have available for the event, assuming each bag must contain exactly 3 toys, 2 candy bars, and 5 stickers? Answer: Question: Olivia is organizing a charity event where she plans to hand out goodie bags to guests. She initially prepares 24 bags, each containing 3 small toys, 2 candy bars, and 5 stickers. After checking the guest list again, she realizes that 8 more children are attending than she expected. So she decides to prepare 8 more bags. However, when she goes to the store to get more supplies, she learns that the toys are sold only in packs of 6, candy bars in packs of 4, and stickers in packs of 10. She buys 4 packs of toys, 5 packs of candy bars, and 5 packs of stickers. After returning home, she assembles the remaining 8 bags. Later, she finds out that 3 of the original bags had missing candy bars, so she opens those bags and replaces the missing items. The next morning, she realizes she miscounted the total number of guests, and actually only 26 children are attending, not 32 as she previously thought. She decides to store the extra bags for a future event. How many complete goodie bags does Olivia now have available for the event, assuming each bag must contain exactly 3 toys, 2 candy bars, and 5 stickers? Answer:", \
+      "max_tokens": 150, \
+      "temperature": 0.2, \
+      "n": 2 \
     }'
 send_request2:
   curl -X POST http://localhost:$(just port 8192)/v1/completions \
@@ -139,6 +181,9 @@ eval:
   lm_eval --model local-completions --tasks gsm8k \
     --model_args model={{MODEL}},base_url=http://127.0.0.1:$(just port 8192)/v1/completions,num_concurrent=5,max_retries=3,tokenized_requests=False \
     --limit 100
+eval_full:
+  lm_eval --model local-completions --tasks gsm8k \
+    --model_args model={{MODEL}},base_url=http://127.0.0.1:$(just port 8192)/v1/completions,num_concurrent=10,max_retries=3,tokenized_requests=False \
 
 
 # Make sure handhshake isnt accounted
@@ -150,3 +195,13 @@ benchmark_one INPUT_LEN:
     --num-requests 10 \
     --seed $(date +%s) \
     --port $(just port 8192)
+
+bench_sharegpt:
+  vllm bench serve \
+    --backend vllm \
+    --model {{MODEL}} \
+    --endpoint /v1/completions \
+    --dataset-name sharegpt \
+    --port $(just port 8192) \
+    --request-rate 10 \
+    --dataset-path {{vllm-directory}}ShareGPT_V3_unfiltered_cleaned_split.json
