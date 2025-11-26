@@ -4,7 +4,7 @@ set working-directory := "/home/NickLucche/llmd/llm-scripts/llmd"
 # Needed for the proxy server
 vllm-directory := "/home/NickLucche/llmd/vllm/" 
 
-# MODEL := "Qwen/Qwen3-0.6B"
+MODEL := "Qwen/Qwen3-0.6B"
 # MODEL := "Qwen/Qwen3-32B"
 # MODEL := "jinaai/ReaderLM-v2"
 # MODEL := "mistralai/Mixtral-8x7B-Instruct-v0.1"
@@ -16,16 +16,16 @@ vllm-directory := "/home/NickLucche/llmd/vllm/"
 # MODEL := "deepseek-ai/deepseek-vl2-small"
 # MODEL := "google/gemma-3-1b-it"
 
-MODEL := "meta-llama/Llama-3.1-70B"
+# MODEL := "meta-llama/Llama-3.1-70B"
 # MODEL := "deepseek-ai/DeepSeek-V2.5"
-TP_SIZE := "4"
-PREFILL_TP_SIZE := "4"
+TP_SIZE := "1"
+PREFILL_TP_SIZE := "1"
 # should use different ones cause it appears to crash oom when sharing
 # though there's plenty of memory
 PREFILL_GPUS := "0,1,2,3,4,5,6,7"
 DECODE_GPUS := "0,1,2,3,4,5,6,7"
 
-MEMORY_UTIL := "0.95"
+MEMORY_UTIL := "0.9"
 BLOCK_SIZE := "128"
 MAX_MODEL_LEN := "32768"
 # PREFIX_CACHING := "--no-enable-prefix-caching"
@@ -43,7 +43,6 @@ regular:
     vllm serve {{MODEL}} \
       --port $(just port 8192) \
       --enforce-eager \
-      --disable-log-requests \
       --tensor-parallel-size {{PREFILL_TP_SIZE}} \
       --gpu-memory-utilization {{MEMORY_UTIL}} \
       --trust-remote-code \
@@ -61,7 +60,6 @@ regular:
 prefill:
   VLLM_NIXL_SIDE_CHANNEL_PORT=$(just port 5557) \
   VLLM_NIXL_ABORT_REQUEST_TIMEOUT=120 \
-    NIXL_TELEMETRY_ENABLE=y \
     CUDA_VISIBLE_DEVICES={{PREFILL_GPUS}} \
     VLLM_LOGGING_LEVEL="INFO" \
       chg run -g{{PREFILL_TP_SIZE}} -- vllm serve {{MODEL}} \
@@ -83,7 +81,6 @@ prefill:
 decode-widep:
     VLLM_NIXL_SIDE_CHANNEL_PORT=$(just port 5558) \
     VLLM_NIXL_ABORT_REQUEST_TIMEOUT=120 \
-    NIXL_TELEMETRY_ENABLE=y \
     DP_SIZE_LOCAL={{TP_SIZE}} \
     VLLM_ENABLE_V1_MULTIPROCESSING=0 \
     CUDA_VISIBLE_DEVICES={{DECODE_GPUS}} \
@@ -91,7 +88,6 @@ decode-widep:
      chg run -g{{TP_SIZE}} -- vllm serve {{MODEL}} \
       --port $(just port 8200) \
       --enforce-eager \
-      --disable-log-requests \
       --data-parallel-size {{TP_SIZE}} \
       --tensor-parallel-size 1 \
       --enable-expert-parallel \
@@ -105,12 +101,10 @@ decode-widep:
 decode:
     VLLM_NIXL_SIDE_CHANNEL_PORT=$(just port 5558) \
     VLLM_NIXL_ABORT_REQUEST_TIMEOUT=120 \
-    NIXL_TELEMETRY_ENABLE=y \
     CUDA_VISIBLE_DEVICES={{DECODE_GPUS}} \
     VLLM_LOGGING_LEVEL="INFO" \
      chg run -g{{TP_SIZE}} -- vllm serve {{MODEL}} \
       --port $(just port 8200) \
-      --disable-log-requests \
       --tensor-parallel-size {{TP_SIZE}} \
       --gpu-memory-utilization {{MEMORY_UTIL}} \
       --trust-remote-code \
